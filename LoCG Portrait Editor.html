@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LoCG Character Portrait Editor</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 24px;
+      background: #080f1f;
+      color: white;
+    }
+
+    .editor {
+      max-width: 400px;
+      margin: 0 auto;
+      background: 080f1f;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+
+    .crop-area {
+        width: 400px;
+  	height: 400px;
+  	margin: 20px auto;
+  	position: relative;
+	overflow: hidden;
+	background: #222;
+  	border-radius: 0;
+  	border: 3px solid #ddd;
+  	cursor: grab;
+  	user-select: none;
+  	touch-action: none;
+  	box-sizing: border-box;
+    }
+
+    .crop-area:active {
+      cursor: grabbing;
+    }
+
+#imageWrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  user-select: none;
+  pointer-events: none;
+}
+
+#previewImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  pointer-events: none;
+}
+
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #111;
+      color: white;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    button:hover {
+      background: #333;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    .output {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .output img {
+      max-width: 400px;
+      border-radius: 0;
+      border: 2px solid #ddd;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="editor">
+    <h2>LoCG Character Portrait Editor</h2>
+
+
+
+    <input type="file" id="imageInput" accept="image/*" /><br>
+
+*if you upload a very large image, the output may contain some unwanted noise, scale down your image first.
+
+    <div class="crop-area" id="cropArea">
+  <div id="imageWrapper">
+    <img id="previewImage" alt="Preview" />
+  </div>
+</div>
+
+    <div class="controls">
+      <label>
+        Zoom:
+        <input type="range" id="zoomSlider" min="1" max="20" step="0.01" value="1" /><br>
+		Rotation: 
+		<input type="range" id="rotationSlider" min="-45" max="45" step="1" value="0" />
+      </label>
+
+      <button id="exportButton">Export Portrait</button>
+    </div>
+
+    <canvas id="exportCanvas"></canvas>
+
+    <div class="output" id="output"></div>
+  </div>
+
+  <script>
+    const imageWrapper = document.getElementById("imageWrapper");
+    const imageInput = document.getElementById("imageInput");
+    const cropArea = document.getElementById("cropArea");
+    const previewImage = document.getElementById("previewImage");
+    const zoomSlider = document.getElementById("zoomSlider");
+    const exportButton = document.getElementById("exportButton");
+    const exportCanvas = document.getElementById("exportCanvas");
+    const output = document.getElementById("output");
+
+    const cropSize = 400;
+    const cropWidth = 400;
+    const cropHeight = 400;
+
+    const exportWidth = 400;
+    const exportHeight = 400;
+
+    let imageLoaded = false;
+
+    let imageNaturalWidth = 0;
+    let imageNaturalHeight = 0;
+
+    let baseScale = 1;
+    let zoom = 1;
+    
+    let rotationDegrees = 0;
+    const rotationSlider = document.getElementById("rotationSlider");
+    
+    rotationSlider.addEventListener("input", (event) => {
+  if (!imageLoaded) return;
+
+  rotationDegrees = Number(event.target.value);
+  updateImageTransform();
+});
+
+    let imageX = 0;
+    let imageY = 0;
+
+    let isDragging = false;
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let startImageX = 0;
+    let startImageY = 0;
+
+    imageInput.addEventListener("change", event => {
+      const file = event.target.files[0];
+
+      if (!file) return;
+
+      const imageUrl = URL.createObjectURL(file);
+
+      previewImage.onload = () => {
+        imageNaturalWidth = previewImage.naturalWidth;
+        imageNaturalHeight = previewImage.naturalHeight;
+        
+        rotationDegrees = 0;
+		rotationSlider.value = 0;
+
+        /**
+         * This makes sure the image fully covers the crop area.
+         * Similar to CSS object-fit: cover.
+         */
+     baseScale = Math.max(
+          cropSize / imageNaturalWidth,
+          cropSize / imageNaturalHeight
+        );
+
+        zoom = 1;
+        zoomSlider.value = 1;
+
+        /**
+         * Center the image inside the crop area initially.
+         */
+        const displayedWidth = imageNaturalWidth * baseScale;
+	const displayedHeight = imageNaturalHeight * baseScale;
+
+	imageX = (cropSize - displayedWidth) / 2;
+        imageY = (cropSize - displayedHeight) / 2;
+
+        imageLoaded = true;
+        updateImageTransform();
+      };
+
+      previewImage.src = imageUrl;
+    });
+
+    zoomSlider.addEventListener("input", event => {
+      if (!imageLoaded) return;
+
+      const oldScale = baseScale * zoom;
+      const newZoom = Number(event.target.value);
+      const newScale = baseScale * newZoom;
+
+      /**
+       * Keep zoom centered around the crop box center.
+       */
+        const centerX = cropWidth / 2;
+        const centerY = cropHeight / 2;
+
+      imageX = centerX - ((centerX - imageX) / oldScale) * newScale;
+      imageY = centerY - ((centerY - imageY) / oldScale) * newScale;
+
+      zoom = newZoom;
+
+      constrainImagePosition();
+      updateImageTransform();
+    });
+
+    cropArea.addEventListener("pointerdown", event => {
+      if (!imageLoaded) return;
+
+      isDragging = true;
+      cropArea.setPointerCapture(event.pointerId);
+
+      startPointerX = event.clientX;
+      startPointerY = event.clientY;
+
+      startImageX = imageX;
+      startImageY = imageY;
+    });
+
+    cropArea.addEventListener("pointermove", event => {
+      if (!isDragging) return;
+
+      const dx = event.clientX - startPointerX;
+      const dy = event.clientY - startPointerY;
+
+      imageX = startImageX + dx;
+      imageY = startImageY + dy;
+
+      constrainImagePosition();
+      updateImageTransform();
+    });
+
+    cropArea.addEventListener("pointerup", () => {
+      isDragging = false;
+    });
+
+    cropArea.addEventListener("pointercancel", () => {
+      isDragging = false;
+    });
+
+function updateImageTransform() {
+  const scale = baseScale * zoom;
+
+  const centerX = cropSize / 2;
+  const centerY = cropSize / 2;
+
+  imageWrapper.style.width = `${imageNaturalWidth}px`;
+  imageWrapper.style.height = `${imageNaturalHeight}px`;
+
+  imageWrapper.style.transform =
+    `translate(${centerX}px, ${centerY}px)
+     rotate(${rotationDegrees}deg)
+     translate(${-centerX}px, ${-centerY}px)
+     translate(${imageX}px, ${imageY}px)
+     scale(${scale})`;
+
+  previewImage.style.transform = "none";
+}
+
+function constrainImagePosition() {
+      const scale = baseScale * zoom;
+
+      const displayedWidth = imageNaturalWidth * scale;
+      const displayedHeight = imageNaturalHeight * scale;
+
+      if (displayedWidth <= cropSize) {
+        imageX = (cropSize - displayedWidth) / 2;
+      } else {
+        imageX = Math.min(0, Math.max(cropSize - displayedWidth, imageX));
+      }
+
+      if (displayedHeight <= cropSize) {
+        imageY = (cropSize - displayedHeight) / 2;
+      } else {
+        imageY = Math.min(0, Math.max(cropSize - displayedHeight, imageY));
+      }
+    }
+
+
+    exportButton.addEventListener("click", () => {
+  if (!imageLoaded) {
+    alert("Please upload an image first.");
+    return;
+  }
+
+  const ctx = exportCanvas.getContext("2d");
+
+  exportCanvas.width = exportWidth;
+  exportCanvas.height = exportHeight;
+
+  ctx.clearRect(0, 0, exportWidth, exportHeight);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, exportWidth, exportHeight);
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const scale = baseScale * zoom;
+const exportScale = exportWidth / cropSize;
+
+const centerX = cropSize / 2;
+const centerY = cropSize / 2;
+
+ctx.save();
+
+ctx.scale(exportScale, exportScale);
+
+ctx.translate(centerX, centerY);
+ctx.rotate((rotationDegrees * Math.PI) / 180);
+ctx.translate(-centerX, -centerY);
+
+ctx.translate(imageX, imageY);
+ctx.scale(scale, scale);
+
+ctx.drawImage(
+  previewImage,
+  0,
+  0,
+  imageNaturalWidth,
+  imageNaturalHeight
+);
+
+ctx.restore();
+
+  const dataUrl = exportCanvas.toDataURL("image/png");
+
+  output.innerHTML = `
+    <h3>Exported Image</h3>
+    <img src="${dataUrl}" alt="Exported avatar" />
+    <br><br>
+    <a href="${dataUrl}" download="locgportrait.png">Download locgportrait.png</a>
+  `;
+});
+
+/**
+       * Majorly written by GPT, feel free to steal! - PDZ
+       */
+  </script>
+</body>
+</html>
