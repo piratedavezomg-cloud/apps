@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LoCG Header Banner Editor</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #080f1f;
+      color: white;
+      padding: 24px;
+      margin: 0;
+    }
+
+    .editor {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: #10192f;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin-top: 0;
+      text-align: center;
+      font-size: 26px;
+    }
+
+    .note {
+      color: #cbd3e6;
+      font-size: 14px;
+      line-height: 1.5;
+      text-align: center;
+      margin-bottom: 18px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
+
+    .toolbar label,
+    .toolbar button {
+      background: #162341;
+      border: 1px solid #34466f;
+      color: white;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .toolbar button:hover,
+    .toolbar label:hover {
+      background: #22345f;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .canvas-wrap {
+      width: 960px;
+      height: 225px;
+      margin: 0 auto;
+      border: 2px solid #d7dceb;
+      background: #111;
+      position: relative;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .secondary-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      margin-top: 18px;
+    }
+
+    .secondary-controls button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #e8ecf8;
+      color: #080f1f;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .secondary-controls button:hover {
+      background: white;
+    }
+
+    .danger {
+      background: #b53a3a !important;
+      color: white !important;
+    }
+
+    .danger:hover {
+      background: #d34a4a !important;
+    }
+
+    .output {
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    .output a {
+      color: white;
+    }
+
+    .small-note {
+      max-width: 850px;
+      margin: 18px auto 0;
+      color: #cbd3e6;
+      font-size: 13px;
+      line-height: 1.5;
+      text-align: center;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="editor">
+    <h1>LoCG Header Banner Editor</h1>
+
+    <div class="note">
+      Create a 1920 × 450 League of Comic Geeks-style header banner.
+      The center guide shows the approximate 550px mobile-safe area.
+      Images are processed locally in your browser.
+    </div>
+
+    <div class="toolbar">
+      <label>
+        Upload Background
+        <input type="file" id="backgroundInput" accept="image/*">
+      </label>
+
+      <label>
+        Add PNG / Image
+        <input type="file" id="objectInput" accept="image/*">
+      </label>
+
+      <button id="clearBackgroundButton">Clear Background</button>
+      <button id="toggleGuideButton">Hide Guide</button>
+    </div>
+
+    <div class="canvas-wrap">
+      <canvas id="bannerCanvas"></canvas>
+    </div>
+
+    <div class="secondary-controls">
+      <button id="bringForwardButton">Bring Forward</button>
+      <button id="sendBackwardButton">Send Backward</button>
+	  <button id="undoButton">Undo</button>
+      <button id="duplicateButton">Duplicate Selected</button>
+      <button id="deleteButton" class="danger">Delete Selected</button>
+      <button id="exportButton">Export 1920 × 450 PNG</button>
+    </div>
+
+    <div class="small-note">
+      Tip: click an added image to select it. Drag to move it, use the corner handles to resize,
+      and use the rotation handle to rotate. Hold SHIFT to skew horizontal/vertical.<P>The guide lines are only for preview and will not appear in the exported image.<p><font color="red"><b>To adjust your own preferred background, just use the Add PNG / Image button and manipulate it like an object!</b><br>(I've kept the Upload Background feature because it tends to crop images into elegant banners automatically)</font color>
+    </div>
+
+    <div class="output" id="output"></div>
+  </div>
+
+  <script>
+    const bannerWidth = 1920;
+    const bannerHeight = 450;
+
+    const previewScale = 0.5;
+
+    const mobileGuideWidth = 550;
+    const guideX = (bannerWidth - mobileGuideWidth) / 2;
+
+    const backgroundInput = document.getElementById("backgroundInput");
+    const objectInput = document.getElementById("objectInput");
+
+    const clearBackgroundButton = document.getElementById("clearBackgroundButton");
+    const toggleGuideButton = document.getElementById("toggleGuideButton");
+
+    const bringForwardButton = document.getElementById("bringForwardButton");
+    const sendBackwardButton = document.getElementById("sendBackwardButton");
+    const duplicateButton = document.getElementById("duplicateButton");
+    const deleteButton = document.getElementById("deleteButton");
+    const exportButton = document.getElementById("exportButton");
+	const undoButton = document.getElementById("undoButton");
+
+    const output = document.getElementById("output");
+
+    const canvas = new fabric.Canvas("bannerCanvas", {
+      width: bannerWidth,
+      height: bannerHeight,
+      backgroundColor: "#111111",
+      preserveObjectStacking: true
+    });
+
+   canvas.setDimensions({
+  width: `${bannerWidth * previewScale}px`,
+  height: `${bannerHeight * previewScale}px`
+}, {
+  cssOnly: true
+});
+
+    fabric.Object.prototype.transparentCorners = false;
+    fabric.Object.prototype.cornerColor = "#ffffff";
+    fabric.Object.prototype.cornerStrokeColor = "#111111";
+    fabric.Object.prototype.borderColor = "#ffffff";
+    fabric.Object.prototype.cornerSize = 14;
+    fabric.Object.prototype.padding = 0;
+
+    let backgroundImage = null;
+    let guideVisible = true;
+    let guideObjects = [];
+	
+	let undoStack = [];
+	let isRestoringState = false;
+	const maxUndoSteps = 30;
+
+    createGuide();
+saveUndoState();
+
+    function createGuide() {
+      removeGuide();
+
+      const leftShade = new fabric.Rect({
+        left: 0,
+        top: 0,
+        width: guideX,
+        height: bannerHeight,
+        fill: "rgba(0, 0, 0, 0.22)",
+        selectable: false,
+        evented: false,
+        excludeFromExport: true
+      });
+
+      const rightShade = new fabric.Rect({
+        left: guideX + mobileGuideWidth,
+        top: 0,
+        width: guideX,
+        height: bannerHeight,
+        fill: "rgba(0, 0, 0, 0.22)",
+        selectable: false,
+        evented: false,
+        excludeFromExport: true
+      });
+
+      const leftLine = new fabric.Line([guideX, 0, guideX, bannerHeight], {
+        stroke: "rgba(255, 255, 255, 0.9)",
+        strokeWidth: 3,
+        selectable: false,
+        evented: false,
+        excludeFromExport: true
+      });
+
+      const rightLine = new fabric.Line(
+        [guideX + mobileGuideWidth, 0, guideX + mobileGuideWidth, bannerHeight],
+        {
+          stroke: "rgba(255, 255, 255, 0.9)",
+          strokeWidth: 3,
+          selectable: false,
+          evented: false,
+          excludeFromExport: true
+        }
+      );
+
+      const centerLine = new fabric.Line([bannerWidth / 2, 0, bannerWidth / 2, bannerHeight], {
+        stroke: "rgba(255, 255, 255, 0.45)",
+        strokeWidth: 2,
+        strokeDashArray: [12, 10],
+        selectable: false,
+        evented: false,
+        excludeFromExport: true
+      });
+
+      const label = new fabric.Text("550px mobile-safe center", {
+        left: bannerWidth / 2,
+        top: 16,
+        originX: "center",
+        fontSize: 28,
+        fill: "rgba(255, 255, 255, 0.9)",
+        selectable: false,
+        evented: false,
+        excludeFromExport: true
+      });
+
+      guideObjects = [leftShade, rightShade, leftLine, rightLine, centerLine, label];
+
+      if (guideVisible) {
+        guideObjects.forEach(obj => canvas.add(obj));
+        bringGuideToFront();
+      }
+
+      canvas.renderAll();
+    }
+
+    function removeGuide() {
+      guideObjects.forEach(obj => canvas.remove(obj));
+      guideObjects = [];
+    }
+
+    function bringGuideToFront() {
+      guideObjects.forEach(obj => canvas.bringToFront(obj));
+    }
+	
+	function getCanvasState() {
+  const visibleGuideObjects = guideObjects.filter(obj => obj.visible);
+
+  guideObjects.forEach(obj => {
+    obj.visible = false;
+  });
+
+  canvas.discardActiveObject();
+  canvas.renderAll();
+
+  const state = JSON.stringify(canvas.toJSON([
+    "name",
+    "selectable",
+    "evented"
+  ]));
+
+  guideObjects.forEach(obj => {
+    obj.visible = visibleGuideObjects.includes(obj);
+  });
+
+  if (guideVisible) {
+    bringGuideToFront();
+  }
+
+  canvas.renderAll();
+
+  return state;
+}
+
+function saveUndoState() {
+  if (isRestoringState) return;
+
+  const state = getCanvasState();
+
+  if (undoStack.length > 0 && undoStack[undoStack.length - 1] === state) {
+    return;
+  }
+
+  undoStack.push(state);
+
+  if (undoStack.length > maxUndoSteps) {
+    undoStack.shift();
+  }
+}
+
+function undoLastAction() {
+  if (undoStack.length <= 1) return;
+
+  isRestoringState = true;
+
+  // Remove the current state.
+  undoStack.pop();
+
+  // Restore the previous state.
+  const previousState = undoStack[undoStack.length - 1];
+
+  removeGuide();
+
+  canvas.loadFromJSON(previousState, () => {
+    canvas.renderAll();
+
+    backgroundImage = null;
+
+    canvas.getObjects().forEach(obj => {
+      if (obj.name === "locked-background") {
+        backgroundImage = obj;
+        obj.set({
+          selectable: false,
+          evented: false
+        });
+        canvas.sendToBack(obj);
+      }
+    });
+
+    if (guideVisible) {
+      createGuide();
+      bringGuideToFront();
+    }
+
+    canvas.discardActiveObject();
+    canvas.renderAll();
+
+    isRestoringState = false;
+  });
+}
+
+    function fitImageToBanner(img) {
+      const scale = Math.max(
+        bannerWidth / img.width,
+        bannerHeight / img.height
+      );
+
+      img.set({
+        left: bannerWidth / 2,
+        top: bannerHeight / 2,
+        originX: "center",
+        originY: "center",
+        scaleX: scale,
+        scaleY: scale,
+        selectable: true,
+        evented: true
+      });
+    }
+
+    function fitObjectReasonably(img) {
+      const maxWidth = bannerWidth * 0.35;
+      const maxHeight = bannerHeight * 0.85;
+
+      const scale = Math.min(
+        maxWidth / img.width,
+        maxHeight / img.height,
+        1
+      );
+
+      img.set({
+        left: bannerWidth / 2,
+        top: bannerHeight / 2,
+        originX: "center",
+        originY: "center",
+        scaleX: scale,
+        scaleY: scale,
+        selectable: true,
+        evented: true
+      });
+    }
+
+    backgroundInput.addEventListener("change", event => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = e => {
+        fabric.Image.fromURL(e.target.result, img => {
+          if (backgroundImage) {
+            canvas.remove(backgroundImage);
+          }
+
+          fitImageToBanner(img);
+
+        img.set({
+  name: "locked-background",
+  selectable: false,
+  evented: false
+});
+
+          backgroundImage = img;
+
+          canvas.add(backgroundImage);
+          canvas.sendToBack(backgroundImage);
+
+          bringGuideToFront();
+          canvas.renderAll();
+		  
+		  saveUndoState();
+        });
+      };
+
+      reader.readAsDataURL(file);
+      backgroundInput.value = "";
+    });
+
+    objectInput.addEventListener("change", event => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = e => {
+        fabric.Image.fromURL(e.target.result, img => {
+          fitObjectReasonably(img);
+
+          img.set({
+            name: "user-object"
+          });
+
+          canvas.add(img);
+          canvas.setActiveObject(img);
+
+          bringGuideToFront();
+          canvas.renderAll();
+		  
+		  saveUndoState();
+        });
+      };
+
+      reader.readAsDataURL(file);
+      objectInput.value = "";
+    });
+
+    clearBackgroundButton.addEventListener("click", () => {
+      if (!backgroundImage) return;
+
+      canvas.remove(backgroundImage);
+      backgroundImage = null;
+      canvas.backgroundColor = "#111111";
+      bringGuideToFront();
+      canvas.renderAll();
+	  
+	  saveUndoState();
+    });
+	
+	undoButton.addEventListener("click", () => {
+  undoLastAction();
+});
+
+    toggleGuideButton.addEventListener("click", () => {
+      guideVisible = !guideVisible;
+
+     if (guideVisible) {
+  createGuide();
+  toggleGuideButton.textContent = "Hide Guide";
+} else {
+  removeGuide();
+  toggleGuideButton.textContent = "Show Guide";
+}
+
+      canvas.renderAll();
+    });
+
+    bringForwardButton.addEventListener("click", () => {
+      const activeObject = canvas.getActiveObject();
+      if (!activeObject || guideObjects.includes(activeObject) || activeObject === backgroundImage) return;
+
+      canvas.bringForward(activeObject);
+      bringGuideToFront();
+      canvas.renderAll();
+	  
+	  saveUndoState();
+    });
+
+    sendBackwardButton.addEventListener("click", () => {
+      const activeObject = canvas.getActiveObject();
+      if (!activeObject || guideObjects.includes(activeObject) || activeObject === backgroundImage) return;
+
+      canvas.sendBackwards(activeObject);
+
+      if (backgroundImage) {
+        canvas.sendToBack(backgroundImage);
+      }
+
+      bringGuideToFront();
+      canvas.renderAll();
+	  
+	  saveUndoState();
+    });
+
+    duplicateButton.addEventListener("click", () => {
+      const activeObject = canvas.getActiveObject();
+      if (!activeObject || guideObjects.includes(activeObject) || activeObject === backgroundImage) return;
+
+      activeObject.clone(cloned => {
+        cloned.set({
+          left: activeObject.left + 40,
+          top: activeObject.top + 40
+        });
+
+        canvas.add(cloned);
+        canvas.setActiveObject(cloned);
+        bringGuideToFront();
+        canvas.renderAll();
+		
+		saveUndoState();
+      });
+    });
+
+    deleteButton.addEventListener("click", () => {
+      const activeObject = canvas.getActiveObject();
+      if (!activeObject || guideObjects.includes(activeObject) || activeObject === backgroundImage) return;
+
+      canvas.remove(activeObject);
+      canvas.discardActiveObject();
+      canvas.renderAll();
+	  
+	  saveUndoState();
+    });
+
+    document.addEventListener("keydown", event => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    undoLastAction();
+    return;
+  }
+
+  const activeObject = canvas.getActiveObject();
+
+  if (!activeObject || guideObjects.includes(activeObject) || activeObject === backgroundImage) {
+    return;
+  }
+
+  if (event.key === "Delete" || event.key === "Backspace") {
+    event.preventDefault();
+
+    canvas.remove(activeObject);
+    canvas.discardActiveObject();
+    canvas.renderAll();
+
+    saveUndoState();
+    return;
+  }
+
+  const moveAmount = event.shiftKey ? 10 : 1;
+  let moved = false;
+
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    activeObject.left -= moveAmount;
+    moved = true;
+  }
+
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    activeObject.left += moveAmount;
+    moved = true;
+  }
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    activeObject.top -= moveAmount;
+    moved = true;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    activeObject.top += moveAmount;
+    moved = true;
+  }
+
+  if (moved) {
+    activeObject.setCoords();
+    bringGuideToFront();
+    canvas.renderAll();
+    saveUndoState();
+  }
+});
+
+  exportButton.addEventListener("click", () => {
+  canvas.discardActiveObject();
+
+  guideObjects.forEach(obj => {
+    obj.visible = false;
+  });
+
+  canvas.renderAll();
+
+  const dataUrl = canvas.toDataURL({
+    format: "png",
+    quality: 1,
+    multiplier: 1,
+    enableRetinaScaling: false
+  });
+
+  guideObjects.forEach(obj => {
+    obj.visible = guideVisible;
+  });
+
+  if (guideVisible) {
+    bringGuideToFront();
+  }
+
+  canvas.renderAll();
+
+  output.innerHTML = `
+    <h3>Exported Banner</h3>
+    <p>
+      <a href="${dataUrl}" download="locg-header-banner.png">
+        Download locg-header-banner.png
+      </a>
+    </p>
+  `;
+});
+
+    canvas.on("object:moving", () => {
+      bringGuideToFront();
+    });
+
+    canvas.on("object:scaling", () => {
+      bringGuideToFront();
+    });
+
+    canvas.on("object:rotating", () => {
+      bringGuideToFront();
+    });
+	
+	canvas.on("object:modified", () => {
+  if (isRestoringState) return;
+  bringGuideToFront();
+  saveUndoState();
+});
+  </script>
+</body>
+</html>
