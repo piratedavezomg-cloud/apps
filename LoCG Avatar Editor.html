@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LoCG Image Editor</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 24px;
+      background: #080f1f;
+      color: white;
+    }
+
+    .editor {
+      max-width: 500px;
+      margin: 0 auto;
+      background: 080f1f;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+
+    .crop-area {
+      width: 200px;
+      height: 200px;
+      margin: 20px auto;
+      position: relative;
+      overflow: hidden;
+      background: #222;
+      border-radius: 50%;
+      border: 3px solid #ddd;
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .crop-area:active {
+      cursor: grabbing;
+    }
+
+    #previewImage {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: top left;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = "high";
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 8px;
+      background: #111;
+      color: white;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    button:hover {
+      background: #333;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    .output {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .output img {
+      max-width: 200px;
+      border-radius: 50%;
+      border: 2px solid #ddd;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="editor">
+    <h2>LoCG Avatar Editor</h2>
+
+
+
+    <input type="file" id="imageInput" accept="image/*" /><br>
+
+*if you upload a very large image, the output may contain some unwanted noise, scale down your image first.
+
+    <div class="crop-area" id="cropArea">
+      <img id="previewImage" alt="Preview" />
+    </div>
+
+    <div class="controls">
+      <label>
+        Zoom:
+        <input type="range" id="zoomSlider" min="1" max="4" step="0.01" value="1" />
+      </label>
+
+      <button id="exportButton">Export Avatar</button>
+    </div>
+
+    <canvas id="exportCanvas"></canvas>
+
+    <div class="output" id="output"></div>
+  </div>
+
+  <script>
+    const imageInput = document.getElementById("imageInput");
+    const cropArea = document.getElementById("cropArea");
+    const previewImage = document.getElementById("previewImage");
+    const zoomSlider = document.getElementById("zoomSlider");
+    const exportButton = document.getElementById("exportButton");
+    const exportCanvas = document.getElementById("exportCanvas");
+    const output = document.getElementById("output");
+
+    const cropSize = 200;
+
+    const exportWidth = 200;
+    const exportHeight = 200;
+
+    let imageLoaded = false;
+
+    let imageNaturalWidth = 0;
+    let imageNaturalHeight = 0;
+
+    let baseScale = 1;
+    let zoom = 1;
+
+    let imageX = 0;
+    let imageY = 0;
+
+    let isDragging = false;
+    let startPointerX = 0;
+    let startPointerY = 0;
+    let startImageX = 0;
+    let startImageY = 0;
+
+    imageInput.addEventListener("change", event => {
+      const file = event.target.files[0];
+
+      if (!file) return;
+
+      const imageUrl = URL.createObjectURL(file);
+
+      previewImage.onload = () => {
+        imageNaturalWidth = previewImage.naturalWidth;
+        imageNaturalHeight = previewImage.naturalHeight;
+
+        /**
+         * This makes sure the image fully covers the crop area.
+         * Similar to CSS object-fit: cover.
+         */
+        baseScale = Math.max(
+          cropSize / imageNaturalWidth,
+          cropSize / imageNaturalHeight
+        );
+
+        zoom = 1;
+        zoomSlider.value = 1;
+
+        /**
+         * Center the image inside the crop area initially.
+         */
+        const displayedWidth = imageNaturalWidth * baseScale;
+        const displayedHeight = imageNaturalHeight * baseScale;
+
+        imageX = (cropSize - displayedWidth) / 2;
+        imageY = (cropSize - displayedHeight) / 2;
+
+        imageLoaded = true;
+        updateImageTransform();
+      };
+
+      previewImage.src = imageUrl;
+    });
+
+    zoomSlider.addEventListener("input", event => {
+      if (!imageLoaded) return;
+
+      const oldScale = baseScale * zoom;
+      const newZoom = Number(event.target.value);
+      const newScale = baseScale * newZoom;
+
+      /**
+       * Keep zoom centered around the crop box center.
+       */
+      const centerX = cropSize / 2;
+      const centerY = cropSize / 2;
+
+      imageX = centerX - ((centerX - imageX) / oldScale) * newScale;
+      imageY = centerY - ((centerY - imageY) / oldScale) * newScale;
+
+      zoom = newZoom;
+
+      constrainImagePosition();
+      updateImageTransform();
+    });
+
+    cropArea.addEventListener("pointerdown", event => {
+      if (!imageLoaded) return;
+
+      isDragging = true;
+      cropArea.setPointerCapture(event.pointerId);
+
+      startPointerX = event.clientX;
+      startPointerY = event.clientY;
+
+      startImageX = imageX;
+      startImageY = imageY;
+    });
+
+    cropArea.addEventListener("pointermove", event => {
+      if (!isDragging) return;
+
+      const dx = event.clientX - startPointerX;
+      const dy = event.clientY - startPointerY;
+
+      imageX = startImageX + dx;
+      imageY = startImageY + dy;
+
+      constrainImagePosition();
+      updateImageTransform();
+    });
+
+    cropArea.addEventListener("pointerup", () => {
+      isDragging = false;
+    });
+
+    cropArea.addEventListener("pointercancel", () => {
+      isDragging = false;
+    });
+
+    function updateImageTransform() {
+      const scale = baseScale * zoom;
+
+      previewImage.style.width = `${imageNaturalWidth}px`;
+      previewImage.style.height = `${imageNaturalHeight}px`;
+
+      previewImage.style.transform =
+        `translate(${imageX}px, ${imageY}px) scale(${scale})`;
+    }
+
+    function constrainImagePosition() {
+      const scale = baseScale * zoom;
+
+      const displayedWidth = imageNaturalWidth * scale;
+      const displayedHeight = imageNaturalHeight * scale;
+
+      /**
+       * Prevent empty space from appearing inside the crop area.
+       */
+      if (displayedWidth <= cropSize) {
+        imageX = (cropSize - displayedWidth) / 2;
+      } else {
+        imageX = Math.min(0, Math.max(cropSize - displayedWidth, imageX));
+      }
+
+      if (displayedHeight <= cropSize) {
+        imageY = (cropSize - displayedHeight) / 2;
+      } else {
+        imageY = Math.min(0, Math.max(cropSize - displayedHeight, imageY));
+      }
+    }
+
+    exportButton.addEventListener("click", () => {
+      if (!imageLoaded) {
+        alert("Please upload an image first.");
+        return;
+      }
+
+      const ctx = exportCanvas.getContext("2d");
+
+      exportCanvas.width = exportWidth;
+      exportCanvas.height = exportHeight;
+
+      ctx.clearRect(0, 0, exportWidth, exportHeight);
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+
+      const scale = baseScale * zoom;
+
+      /**
+       * Convert crop-area coordinates back into original image coordinates.
+       */
+      const sourceX = -imageX / scale;
+      const sourceY = -imageY / scale;
+      const sourceWidth = cropSize / scale;
+      const sourceHeight = cropSize / scale;
+
+      /**
+       * Draw the cropped image into the exact output dimensions.
+       */
+      ctx.drawImage(
+        previewImage,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        exportWidth,
+        exportHeight
+      );
+
+      const dataUrl = exportCanvas.toDataURL("image/png");
+
+      output.innerHTML = `
+        <h3>Exported Image</h3>
+        <img src="${dataUrl}" alt="Exported avatar" />
+        <br><br>
+        <a href="${dataUrl}" download="locgavatar.png">Download locgavatar.png</a>
+      `;
+    });
+  </script>
+</body>
+</html>
